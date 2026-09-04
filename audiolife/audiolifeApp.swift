@@ -5,28 +5,29 @@
 //  Created by xiao on 2026/8/29.
 //
 
-import SwiftUI
+import AppIntents
 import SwiftData
+import SwiftUI
 
 @main
 struct audiolifeApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+    @State private var router = AppRouter.shared
 
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
+    init() {
+        DiagnosticLogger.log("AudioLife application initialized")
+        AppModelStore.migrateLegacyContentIfNeeded()
+        AudioLifeShortcuts.updateAppShortcutParameters()
+        _ = RecordingSessionManager.shared
+    }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environment(router)
+                .onOpenURL { url in
+                    router.handle(url: url)
+                }
         }
-        .modelContainer(sharedModelContainer)
+        .modelContainer(AppModelStore.container)
     }
 }
