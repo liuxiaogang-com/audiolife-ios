@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Select and verify Xcode
         shell: bash
@@ -109,7 +109,7 @@ jobs:
           du -h "$ipa_path"
 
       - name: Upload IPA artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ steps.metadata.outputs.artifact_name }}
           path: ${{ steps.package.outputs.ipa_path }}
