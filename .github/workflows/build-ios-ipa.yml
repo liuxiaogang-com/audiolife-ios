@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: build-ios-${{ github.ref }}
@@ -53,6 +53,8 @@ jobs:
 
           short_sha="${GITHUB_SHA:0:7}"
           artifact_name="AudioLife-${version}-${build}-${short_sha}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
           echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
           echo "Building $artifact_name"
 
@@ -115,3 +117,34 @@ jobs:
           path: ${{ steps.package.outputs.ipa_path }}
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish IPA in GitHub Releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_VERSION: ${{ steps.metadata.outputs.version }}
+          APP_BUILD: ${{ steps.metadata.outputs.build }}
+          ARTIFACT_NAME: ${{ steps.metadata.outputs.artifact_name }}
+          IPA_PATH: ${{ steps.package.outputs.ipa_path }}
+        run: |
+          set -euo pipefail
+          release_tag="build-v${APP_VERSION}-${APP_BUILD}-r${GITHUB_RUN_NUMBER}"
+          release_title="AudioLife v${APP_VERSION} (${APP_BUILD}) · build ${GITHUB_RUN_NUMBER}"
+          release_notes="Automated unsigned IPA for Windows/AltStore signing. Commit: ${GITHUB_SHA}. Actions run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$release_tag" "$IPA_PATH" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$release_tag" "$IPA_PATH" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$release_title" \
+              --notes "$release_notes" \
+              --prerelease
+          fi
+
+          gh release view "$release_tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json tagName,name,isPrerelease,url
