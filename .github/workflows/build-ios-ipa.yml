@@ -22,8 +22,6 @@ jobs:
     env:
       XCODE_PROJECT: audiolife.xcodeproj
       APP_TARGET: audiolife
-      DERIVED_DATA: ${{ runner.temp }}/AudioLifeDerivedData
-      PACKAGE_ROOT: ${{ runner.temp }}/AudioLifePackage
 
     steps:
       - name: Check out source
@@ -62,13 +60,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          derived_data="$RUNNER_TEMP/AudioLifeDerivedData"
           xcodebuild \
             -project "$XCODE_PROJECT" \
             -target "$APP_TARGET" \
             -configuration Release \
             -sdk iphoneos \
-            SYMROOT="$DERIVED_DATA/Build/Products" \
-            OBJROOT="$DERIVED_DATA/Build/Intermediates.noindex" \
+            SYMROOT="$derived_data/Build/Products" \
+            OBJROOT="$derived_data/Build/Intermediates.noindex" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY='' \
@@ -81,8 +80,10 @@ jobs:
           ARTIFACT_NAME: ${{ steps.metadata.outputs.artifact_name }}
         run: |
           set -euo pipefail
-          app_path="$DERIVED_DATA/Build/Products/Release-iphoneos/audiolife.app"
-          payload_path="$PACKAGE_ROOT/Payload"
+          derived_data="$RUNNER_TEMP/AudioLifeDerivedData"
+          package_root="$RUNNER_TEMP/AudioLifePackage"
+          app_path="$derived_data/Build/Products/Release-iphoneos/audiolife.app"
+          payload_path="$package_root/Payload"
           ipa_path="$RUNNER_TEMP/${ARTIFACT_NAME}.ipa"
 
           test -d "$app_path"
@@ -97,7 +98,7 @@ jobs:
           mkdir -p "$payload_path"
           cp -R "$app_path" "$payload_path/AudioLife.app"
           (
-            cd "$PACKAGE_ROOT"
+            cd "$package_root"
             /usr/bin/zip -qry "$ipa_path" Payload
           )
 
