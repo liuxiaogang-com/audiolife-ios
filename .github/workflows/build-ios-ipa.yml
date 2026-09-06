@@ -1,0 +1,116 @@
+name: Build AudioLife IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build unsigned IPA
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    env:
+      XCODE_PROJECT: audiolife.xcodeproj
+      APP_TARGET: audiolife
+      DERIVED_DATA: ${{ runner.temp }}/AudioLifeDerivedData
+      PACKAGE_ROOT: ${{ runner.temp }}/AudioLifePackage
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Select and verify Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Read app version
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          settings="$(xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -target "$APP_TARGET" \
+            -configuration Release \
+            -showBuildSettings)"
+
+          version="$(printf '%s\n' "$settings" | sed -n 's/^[[:space:]]*MARKETING_VERSION = //p' | head -1)"
+          build="$(printf '%s\n' "$settings" | sed -n 's/^[[:space:]]*CURRENT_PROJECT_VERSION = //p' | head -1)"
+          test -n "$version"
+          test -n "$build"
+
+          short_sha="${GITHUB_SHA:0:7}"
+          artifact_name="AudioLife-${version}-${build}-${short_sha}"
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+          echo "Building $artifact_name"
+
+      - name: Build for iPhone without signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -target "$APP_TARGET" \
+            -configuration Release \
+            -sdk iphoneos \
+            SYMROOT="$DERIVED_DATA/Build/Products" \
+            OBJROOT="$DERIVED_DATA/Build/Intermediates.noindex" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            clean build
+
+      - name: Package and validate IPA
+        id: package
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ steps.metadata.outputs.artifact_name }}
+        run: |
+          set -euo pipefail
+          app_path="$DERIVED_DATA/Build/Products/Release-iphoneos/audiolife.app"
+          payload_path="$PACKAGE_ROOT/Payload"
+          ipa_path="$RUNNER_TEMP/${ARTIFACT_NAME}.ipa"
+
+          test -d "$app_path"
+          test -f "$app_path/audiolife"
+          test -d "$app_path/PlugIns/AudioLifeWidgets.appex"
+
+          bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_path/Info.plist")"
+          widget_bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_path/PlugIns/AudioLifeWidgets.appex/Info.plist")"
+          test "$bundle_id" = 'com.liuxiaogang.audiolife'
+          test "$widget_bundle_id" = 'com.liuxiaogang.audiolife.AudioLifeWidgets'
+
+          mkdir -p "$payload_path"
+          cp -R "$app_path" "$payload_path/AudioLife.app"
+          (
+            cd "$PACKAGE_ROOT"
+            /usr/bin/zip -qry "$ipa_path" Payload
+          )
+
+          test -s "$ipa_path"
+          /usr/bin/unzip -tq "$ipa_path"
+          echo "ipa_path=$ipa_path" >> "$GITHUB_OUTPUT"
+          echo "Created $(basename "$ipa_path")"
+          du -h "$ipa_path"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.metadata.outputs.artifact_name }}
+          path: ${{ steps.package.outputs.ipa_path }}
+          if-no-files-found: error
+          retention-days: 30
