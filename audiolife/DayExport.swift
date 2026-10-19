@@ -34,6 +34,8 @@ struct DayExportSnapshot: Sendable {
         let duration: TimeInterval
         let transcript: String
         let audioURL: URL?
+        let title: String
+        let attachments: [EntryAttachment]
     }
 
     let date: Date
@@ -49,7 +51,9 @@ struct DayExportSnapshot: Sendable {
                 createdAt: clip.createdAt,
                 duration: clip.duration,
                 transcript: clip.transcript,
-                audioURL: audioURL
+                audioURL: audioURL,
+                title: clip.displayTitle,
+                attachments: clip.attachments
             )
         }
     }
@@ -153,6 +157,16 @@ enum DayExportBuilder {
             completedWeight += weight
         }
 
+        let attachmentsDirectory = packageURL.appendingPathComponent("attachments", isDirectory: true)
+        for clip in snapshot.clips {
+            for attachment in clip.attachments where includesDocument || attachment.isAudio {
+                guard let source = EntryFiles.url(for: attachment) else { throw CocoaError(.fileNoSuchFile) }
+                try fileManager.createDirectory(at: attachmentsDirectory, withIntermediateDirectories: true)
+                let name = attachment.id.uuidString + "." + source.pathExtension
+                try fileManager.copyItem(at: source, to: attachmentsDirectory.appendingPathComponent(name))
+            }
+        }
+
         let zipURL = exportRoot.appendingPathComponent("\(packageURL.lastPathComponent).zip")
         try ZIPArchiveWriter.createArchive(from: packageURL, at: zipURL) { zipProgress in
             progress.report(
@@ -171,20 +185,29 @@ enum DayExportBuilder {
     ) -> String {
         let totalDuration = snapshot.clips.reduce(0) { $0 + $1.duration }
         var lines = [
-            "# \(formatted(snapshot.date, as: "yyyy年M月d日 EEEE"))",
+            "# \(snapshot.date.displayFullDate)",
             "",
-            "> \(snapshot.clips.count) 段录音 · \(durationText(totalDuration))",
+            "> \(snapshot.clips.count) 条记录 · \(durationText(totalDuration))",
             ""
         ]
 
         for (index, clip) in snapshot.clips.enumerated() {
-            lines.append("## \(formatted(clip.createdAt, as: "HH:mm")) · \(durationText(clip.duration))")
+            lines.append("## \(clip.createdAt.displayTime) · \(clip.title)")
             if includeAudioLinks, clip.audioURL != nil {
                 lines.append("")
                 lines.append("音频：[\(audioFileName(for: clip, index: index))](audio/\(audioFileName(for: clip, index: index)))")
             }
             lines.append("")
             lines.append(clip.transcript.isEmpty ? "_暂无转录内容_" : clip.transcript)
+            for attachment in clip.attachments {
+                lines.append("")
+                lines.append("### 附件：\(attachment.originalName)")
+                if includeAudioLinks {
+                    let ext = URL(fileURLWithPath: attachment.relativePath).pathExtension
+                    lines.append("文件：attachments/\(attachment.id.uuidString).\(ext)")
+                }
+                lines.append(attachment.extractedText)
+            }
             lines.append("")
         }
         return lines.joined(separator: "\n")
@@ -197,6 +220,12 @@ enum DayExportBuilder {
                 "createdAt": ISO8601DateFormatter().string(from: clip.createdAt),
                 "duration": clip.duration,
                 "transcript": clip.transcript,
+                "title": clip.title,
+                "attachments": clip.attachments.map { item in
+                    ["id": item.id.uuidString, "name": item.originalName, "sha256": item.sha256,
+                     "file": "attachments/" + item.id.uuidString + "." + URL(fileURLWithPath: item.relativePath).pathExtension,
+                     "text": item.extractedText]
+                },
                 "audioFile": clip.audioURL == nil ? NSNull() : "audio/\(audioFileName(for: clip, index: index))"
             ]
         }
@@ -377,8 +406,8 @@ private struct DayExportOptionsSheet: View {
             List {
                 Section {
                     option(
-                        title: "文档和音频",
-                        detail: "Markdown、JSON 和 WAV，打包为 ZIP",
+                        title: "文档与全部附件",
+                        detail: "正文、识别文字、录音和附件，打包为 ZIP",
                         icon: "shippingbox",
                         mode: .documentAndAudio
                     )
@@ -390,15 +419,15 @@ private struct DayExportOptionsSheet: View {
                     )
                     option(
                         title: "仅导出音频",
-                        detail: "当天全部录音转换为 WAV 并打包",
+                        detail: "原有录音转为 WAV，导入的音频保留原格式",
                         icon: "waveform",
                         mode: .audioOnly
                     )
                 } footer: {
-                    Text("音频在导出时转换为通用 WAV；App 内仍保留原始安全录音。")
+                    Text("App 内保留原文件。仅文档不含附件原文件；文档与全部附件包含照片、视频和文件。")
                 }
             }
-            .navigationTitle("导出\(date?.chineseMonthDayWeekday ?? "这一天")")
+            .navigationTitle("导出\(date?.displayMonthDayWeekday ?? "这一天")")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

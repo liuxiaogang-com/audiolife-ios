@@ -12,9 +12,30 @@ struct SettingsView: View {
     @State private var isModelDownloading = false
     @State private var modelDownloadProgress = 0.0
 
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
+    }
+
+    private var buildNumber: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "未知"
+    }
+
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    LabeledContent("版本号", value: appVersion)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("settings.version")
+                    LabeledContent("构建号", value: buildNumber)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("settings.build")
+                } header: {
+                    Text("关于 AudioLife")
+                } footer: {
+                    Text("反馈问题时，请提供版本号和构建号。")
+                }
+
                 Section {
                     NavigationLink {
                         AITextSettingsView()
@@ -88,7 +109,7 @@ struct SettingsView: View {
 
                     DisclosureGroup("空间明细") {
                         StorageCategoryRow(
-                            title: "录音",
+                            title: "录音与附件",
                             icon: "waveform",
                             tint: .blue,
                             bytes: snapshot.activeRecordingBytes
@@ -100,7 +121,13 @@ struct SettingsView: View {
                             bytes: snapshot.trashBytes
                         )
                         StorageCategoryRow(
-                            title: "数据库",
+                            title: "草稿及待整理附件",
+                            icon: "paperclip",
+                            tint: .purple,
+                            bytes: snapshot.draftAttachmentBytes
+                        )
+                        StorageCategoryRow(
+                            title: "数据库及升级备份",
                             icon: "cylinder",
                             tint: .green,
                             bytes: snapshot.databaseBytes
@@ -110,12 +137,12 @@ struct SettingsView: View {
                     NavigationLink {
                         StorageFilesView()
                     } label: {
-                        Label("管理录音文件", systemImage: "externaldrive")
+                        Label("管理记录与附件", systemImage: "externaldrive")
                     }
                 } header: {
                     Text("存储")
                 } footer: {
-                    Text("删除的录音会先进入回收站。")
+                    Text("删除的内容先进入回收站。彻底删除记录时会同时删除其附件。")
                 }
 
                 Section("维护") {
@@ -210,7 +237,9 @@ struct SettingsView: View {
                 duration: clip.duration,
                 fileName: clip.fileName,
                 isTrashed: clip.isTrashed,
-                audioURL: AudioRecorderController.fileURL(for: clip.fileName)
+                audioURL: AudioRecorderController.fileURL(for: clip.fileName),
+                attachmentURLs: clip.attachments.compactMap { EntryFiles.url(for: $0) },
+                displayName: clip.displayTitle
             )
         }
     }
@@ -337,6 +366,7 @@ private struct StorageFilesView: View {
     @State private var isLoading = true
     @State private var sortMode: SortMode = .size
     @State private var pendingPermanentDeleteID: UUID?
+    @State private var deletionError: String?
 
     private var sortedUsages: [StorageClipUsage] {
         switch sortMode {
@@ -357,7 +387,7 @@ private struct StorageFilesView: View {
                 }
                 .listRowBackground(Color.clear)
             } else if sortedUsages.isEmpty {
-                ContentUnavailableView("没有录音文件", systemImage: "waveform")
+                ContentUnavailableView("没有记录或附件", systemImage: "doc")
                     .listRowBackground(Color.clear)
             } else {
                 Section {
@@ -384,7 +414,7 @@ private struct StorageFilesView: View {
                 }
             }
         }
-        .navigationTitle("录音文件")
+        .navigationTitle("记录与附件")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -402,7 +432,7 @@ private struct StorageFilesView: View {
         }
         .onAppear { refresh() }
         .refreshable { await refreshAndWait() }
-        .alert("彻底删除这段录音？", isPresented: permanentDeleteBinding) {
+        .alert("彻底删除这条记录及其附件？", isPresented: permanentDeleteBinding) {
             Button("取消", role: .cancel) { pendingPermanentDeleteID = nil }
             Button("彻底删除", role: .destructive) {
                 permanentlyDeletePendingClip()
@@ -410,6 +440,9 @@ private struct StorageFilesView: View {
         } message: {
             Text("录音文件和转录内容删除后无法恢复。")
         }
+        .alert("删除失败", isPresented: Binding(get: { deletionError != nil }, set: { if !$0 { deletionError = nil } })) {
+            Button("好") {}
+        } message: { Text(deletionError ?? "") }
     }
 
     private var permanentDeleteBinding: Binding<Bool> {
@@ -443,7 +476,9 @@ private struct StorageFilesView: View {
                 duration: clip.duration,
                 fileName: clip.fileName,
                 isTrashed: clip.isTrashed,
-                audioURL: AudioRecorderController.fileURL(for: clip.fileName)
+                audioURL: AudioRecorderController.fileURL(for: clip.fileName),
+                attachmentURLs: clip.attachments.compactMap { EntryFiles.url(for: $0) },
+                displayName: clip.displayTitle
             )
         }
     }
@@ -463,12 +498,8 @@ private struct StorageFilesView: View {
         pendingPermanentDeleteID = nil
         let day = clip.day
         let shouldDeleteDay = day?.clips.allSatisfy { $0.id == clip.id } == true
-        AudioRecorderController.removeRecordingFiles(for: clip.fileName)
-        modelContext.delete(clip)
-        if shouldDeleteDay, let day {
-            modelContext.delete(day)
-        }
-        try? modelContext.save()
+        do { try EntryDeletion.permanentlyDelete([clip], day: shouldDeleteDay ? day : nil, in: modelContext) }
+        catch { deletionError = error.localizedDescription; return }
         refresh()
     }
 }
@@ -478,7 +509,7 @@ private struct StorageFileRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: usage.isTrashed ? "trash" : "waveform")
+            Image(systemName: usage.isTrashed ? "trash" : usage.duration > 0 ? "waveform" : "doc")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(usage.isTrashed ? .orange : .blue)
                 .frame(width: 34, height: 34)
@@ -489,13 +520,13 @@ private struct StorageFileRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(usage.createdAt.chineseMonthDayWeekday)
+                    Text(usage.createdAt.displayMonthDayWeekday)
                         .font(.subheadline.weight(.semibold))
-                    Text(usage.createdAt.chineseTime)
+                    Text(usage.createdAt.displayTime)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Text("\(usage.duration.durationText) · \(URL(fileURLWithPath: usage.fileName).lastPathComponent)")
+                Text((usage.duration > 0 ? usage.duration.durationText + " · " : "") + URL(fileURLWithPath: usage.fileName).lastPathComponent)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)

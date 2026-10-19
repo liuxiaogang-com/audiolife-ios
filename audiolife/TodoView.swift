@@ -199,10 +199,7 @@ private struct TodoRow: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if let dueDate = item.dueDate {
                         Label(
-                            dueDate.formatted(
-                                Date.FormatStyle(date: .abbreviated, time: .shortened)
-                                    .locale(Locale(identifier: "zh_CN"))
-                            ),
+                            dueDate.displayDateTime,
                             systemImage: "bell"
                         )
                         .font(.caption)
@@ -240,10 +237,7 @@ private struct TodoSuggestionRow: View {
             }
             if let dueDate = item.dueDate {
                 Label(
-                    dueDate.formatted(
-                        Date.FormatStyle(date: .abbreviated, time: .shortened)
-                            .locale(Locale(identifier: "zh_CN"))
-                    ),
+                    dueDate.displayDateTime,
                     systemImage: "clock"
                 )
                 .font(.caption)

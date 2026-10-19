@@ -9,3 +9,14 @@ xcuserdata/
 *.dSYM/
 __pycache__/
 *.pyc
+
+# Local phone data, build deliveries and machine credentials
+DeviceBackups/
+BuildArtifacts/
+.tools/
+.ssh/
+*.xcarchive/
+*.credential.xml
+*.p12
+*.p8
+*.mobileprovision

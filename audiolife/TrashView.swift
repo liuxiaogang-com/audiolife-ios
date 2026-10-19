@@ -4,6 +4,11 @@ import SwiftUI
 struct TrashView: View {
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \JournalDay.date, order: .reverse) private var days: [JournalDay]
+    @Query(sort: \RecordingClip.createdAt, order: .reverse) private var entries: [RecordingClip]
+    @Environment(\.modelContext) private var context
+    @State private var deletingNote: RecordingClip?
+    @State private var showDeleteNote = false
+    @State private var noteError: String?
 
     @State private var path: [UUID] = []
 
@@ -14,7 +19,7 @@ struct TrashView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                if trashedDays.isEmpty {
+                if trashedDays.isEmpty && !entries.contains(where: { $0.day == nil && $0.isTrashed }) {
                     ContentUnavailableView(
                         "回收站是空的",
                         systemImage: "trash",
@@ -23,6 +28,23 @@ struct TrashView: View {
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                 } else {
+                    Section("随手笔记") {
+                        ForEach(entries.filter { $0.day == nil && $0.isTrashed }) { entry in
+                            VStack(alignment: .leading, spacing: 10) {
+                                EntrySummaryRow(entry: entry)
+                                HStack {
+                                    Button("恢复") {
+                                        entry.isTrashed = false; entry.trashedAt = nil
+                                        do { try context.save(); EntryProcessingQueue.shared.resume(in: context) }
+                                        catch { noteError = error.localizedDescription }
+                                    }
+                                    Spacer()
+                                    Button("彻底删除", role: .destructive) { deletingNote = entry; showDeleteNote = true }
+                                }.buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                    Section("日记") {
                     ForEach(trashedDays) { day in
                         Button {
                             path.append(day.id)
@@ -35,6 +57,7 @@ struct TrashView: View {
                         )
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
+                    }
                     }
                 }
             }
@@ -53,6 +76,16 @@ struct TrashView: View {
                     TrashDayDetailView(day: day)
                 }
             }
+            .confirmationDialog("彻底删除笔记及其附件？", isPresented: $showDeleteNote, titleVisibility: .visible, presenting: deletingNote) { entry in
+                Button("彻底删除", role: .destructive) {
+                    do {
+                        try EntryDeletion.permanentlyDelete([entry], in: context)
+                    } catch { context.rollback(); noteError = error.localizedDescription }
+                }
+            }
+            .alert("操作失败", isPresented: Binding(get: { noteError != nil }, set: { if !$0 { noteError = nil } })) {
+                Button("好") {}
+            } message: { Text(noteError ?? "") }
         }
     }
 }
@@ -63,9 +96,9 @@ private struct TrashDayRow: View {
     var body: some View {
         HStack(spacing: 14) {
             VStack(spacing: 0) {
-                Text(day.date.chineseDay)
+                Text(day.date.displayDay)
                     .font(.title2.weight(.bold))
-                Text(day.date.chineseMonth)
+                Text(day.date.displayMonth)
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.secondary)
             }
@@ -73,7 +106,7 @@ private struct TrashDayRow: View {
             .background(Color.secondary.opacity(0.12), in: .rect(cornerRadius: 15))
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(day.date.chineseMonthDayWeekday)
+                Text(day.date.displayMonthDayWeekday)
                     .font(.headline)
                 HStack(spacing: 12) {
                     Text("\(day.trashedClips.count) 段录音")
@@ -102,11 +135,22 @@ private struct TrashDayDetailView: View {
 
     @StateObject private var player = AudioPlayerController()
     @State private var showDeleteConfirmation = false
+    @State private var deletionError: String?
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 10) {
                 ForEach(day.trashedClips) { clip in
+                    if !clip.hasAudio {
+                        VStack(alignment: .leading, spacing: 10) {
+                            EntrySummaryRow(entry: clip)
+                            HStack {
+                                Button("恢复") { restore(clip) }
+                                Spacer()
+                                Button("彻底删除", role: .destructive) { permanentlyDelete(clip) }
+                            }.buttonStyle(.bordered)
+                        }.padding()
+                    } else {
                     TrashRecordingCard(
                         clip: clip,
                         isSelected: player.playingClipID == clip.id,
@@ -116,13 +160,14 @@ private struct TrashDayDetailView: View {
                         restoreAction: { restore(clip) },
                         deleteAction: { permanentlyDelete(clip) }
                     )
+                    }
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
         .background(Color(uiColor: .systemGroupedBackground))
-        .navigationTitle(day.date.chineseMonthDayWeekday)
+        .navigationTitle(day.date.displayMonthDayWeekday)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -151,6 +196,9 @@ private struct TrashDayDetailView: View {
         } message: {
             Text("录音文件和转录内容删除后无法恢复。")
         }
+        .alert("删除失败", isPresented: Binding(get: { deletionError != nil }, set: { if !$0 { deletionError = nil } })) {
+            Button("好") {}
+        } message: { Text(deletionError ?? "") }
         .onDisappear { player.stop() }
     }
 
@@ -179,12 +227,8 @@ private struct TrashDayDetailView: View {
     private func permanentlyDelete(_ clip: RecordingClip) {
         player.stop()
         let shouldDeleteDay = day.activeClips.isEmpty && day.trashedClips.count == 1
-        AudioRecorderController.removeRecordingFiles(for: clip.fileName)
-        modelContext.delete(clip)
-        if shouldDeleteDay {
-            modelContext.delete(day)
-        }
-        try? modelContext.save()
+        do { try EntryDeletion.permanentlyDelete([clip], day: shouldDeleteDay ? day : nil, in: modelContext) }
+        catch { deletionError = error.localizedDescription; return }
         if shouldDeleteDay {
             dismiss()
         } else {
@@ -195,15 +239,9 @@ private struct TrashDayDetailView: View {
     private func permanentlyDeleteAll() {
         player.stop()
         let trashedClips = day.trashedClips
-        for clip in trashedClips {
-            AudioRecorderController.removeRecordingFiles(for: clip.fileName)
-            modelContext.delete(clip)
-        }
-
-        if day.isTrashed || day.activeClips.isEmpty {
-            modelContext.delete(day)
-        }
-        try? modelContext.save()
+        do {
+            try EntryDeletion.permanentlyDelete(trashedClips, day: (day.isTrashed || day.activeClips.isEmpty) ? day : nil, in: modelContext)
+        } catch { deletionError = error.localizedDescription; return }
         dismiss()
     }
 
@@ -237,7 +275,7 @@ private struct TrashRecordingCard: View {
                 }
                 .buttonStyle(.plain)
 
-                Text(clip.createdAt.chineseTime)
+                Text(clip.createdAt.displayTime)
                     .font(.subheadline.weight(.medium))
 
                 Spacer()

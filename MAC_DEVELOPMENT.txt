@@ -1,0 +1,55 @@
+AudioLife — 新 Mac 开发说明
+
+仓库：liuxiaogang-com/audiolife-ios
+地址：https://github.com/liuxiaogang-com/audiolife-ios.git
+分支：main
+本次同步版本：1.1（构建 5）。
+
+首次使用（Mac 终端）
+  git clone https://github.com/liuxiaogang-com/audiolife-ios.git
+  cd audiolife-ios
+  open audiolife.xcodeproj
+
+直接在 Mac 本地磁盘开发和构建，不需要 Windows 或虚拟机同步。
+当前代码已使用 Xcode 26.3、iPhoneOS SDK 26.2 校验通过；最低 iOS 26.0。
+在 Xcode 中选择 audiolife scheme 和 iPhone 模拟器即可构建运行。
+签名及真实设备安装需在该 Mac 上配置自己的开发团队，或继续使用未签名 IPA + Sideloadly。
+
+不登录 Apple 账号的设备版编译检查
+  xcodebuild build -project audiolife.xcodeproj -scheme audiolife \
+    -configuration Release -destination 'generic/platform=iOS' \
+    -derivedDataPath .build/local-device \
+    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM=
+这一步只编译，不代表已经完成真机签名或安装。
+
+日常同步
+  git pull --ff-only
+修改完成并校验后
+  git add <本次修改的文件>
+  git commit -m "描述本次修改"
+  git push origin main
+每次换电脑前先提交并推送，在另一台电脑开始前先拉取，避免两台电脑分别留下未同步修改。
+
+版本
+设置页顶部直接从安装包读取版本号和构建号。
+在 Xcode target 的 Version / Build 中维护；主程序与 Widget 的版本和构建号应保持一致。
+
+当前功能
+笔记与日记、文字和草稿、外部音频导入及转写队列、附件和 OCR、导出、存储与回收站。
+AI 页目前为“正在开发”。Live Activity / 灵动岛未启用。
+原 Control Center Widget 源码保留；目前交付用的 nowidget IPA 已移除扩展。
+
+数据与凭据
+GitHub 中只有源码、资源和构建脚本，不包含手机数据备份、IPA、编译缓存或机器凭据。
+手机备份和历史 IPA 仍在原 Windows 项目外层的 DeviceBackups / BuildArtifacts 目录，需另行保管。
+系统钥匙串中的 API Key、Apple 账号和签名证书不能通过克隆 Git 仓库恢复。
+
+可选 Windows → Mac VM 流程
+scripts/Invoke-MacBuild.ps1 和 MAC_VM_WORKFLOW.txt 记录原来的远程构建流程。
+它们的默认地址仅适用于旧虚拟机；新 Mac 本地开发不需要运行这些脚本。
+其中引用的 SSH 私钥和加密凭据不在仓库里。
+
+验证记录
+1.1（构建 5）通过 Xcode analyze、arm64 Release、模拟器构建与启动，以及 10 项 DEBUG 运行检查。
+日期格式用例覆盖中文、英文、跨时区和 12/24 小时制。
+这些运行检查不等同于 XCTest 或完整真机验收。项目目前没有 XCTest target。

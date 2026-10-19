@@ -127,19 +127,26 @@ actor ModernSpeechService {
             )
         }
 
+        return try await withTaskCancellationHandler {
         do {
+            try Task.checkCancellation()
             if let lastSample = try await analyzer.analyzeSequence(from: audioFile) {
                 try await analyzer.finalizeAndFinish(through: lastSample)
             } else {
                 await analyzer.cancelAndFinishNow()
             }
             let result = try await resultTask.value
+            try Task.checkCancellation()
             guard !result.text.isEmpty else { throw ServiceError.emptyResult }
             return result
         } catch {
             resultTask.cancel()
             await analyzer.cancelAndFinishNow()
             throw error
+        }
+        } onCancel: {
+            resultTask.cancel()
+            Task { await analyzer.cancelAndFinishNow() }
         }
     }
 

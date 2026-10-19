@@ -3,17 +3,28 @@ import SwiftData
 
 @MainActor
 enum AppModelStore {
-    static let container: ModelContainer = {
+    static let loadResult: Result<ModelContainer, Error> = {
         do {
-            return try ModelContainer(
+            try DataSafetyBackup.prepareIfNeeded()
+            let container = try ModelContainer(
                 for: JournalDay.self,
                 RecordingClip.self,
                 TodoItem.self
             )
+            UserDefaults.standard.set(1, forKey: "entry-schema-version")
+            return .success(container)
         } catch {
-            fatalError("无法创建 AudioLife 数据库：\(error.localizedDescription)")
+            DiagnosticLogger.log("Database open/migration failed: \(error.localizedDescription)")
+            return .failure(error)
         }
     }()
+
+    static var container: ModelContainer {
+        guard case .success(let container) = loadResult else {
+            preconditionFailure("Database unavailable; present recovery view before accessing models")
+        }
+        return container
+    }
 
     static func migrateLegacyContentIfNeeded() {
         let context = container.mainContext

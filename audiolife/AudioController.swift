@@ -393,6 +393,8 @@ final class AudioRecorderController: ObservableObject {
     }
 
     static func fileURL(for fileName: String) -> URL? {
+        guard !fileName.isEmpty, !fileName.hasPrefix("/"),
+              !fileName.split(separator: "/").contains("..") else { return nil }
         guard let directory = try? recordingsDirectory() else { return nil }
         let directURL = directory.appendingPathComponent(fileName)
         if FileManager.default.fileExists(atPath: directURL.path) {

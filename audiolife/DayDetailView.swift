@@ -15,12 +15,13 @@ struct DayDetailView: View {
     @State private var editingClip: RecordingClip?
     @State private var tagEditingClip: RecordingClip?
     @State private var originalTranscriptClip: RecordingClip?
+    @State private var showTextComposer = false
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 10) {
                 HStack {
-                    Text("\(day.activeClips.count) 段录音")
+                    Text("\(day.activeClips.count) 条记录")
                     Spacer()
                     Text(day.totalDuration.durationText)
                 }
@@ -37,6 +38,12 @@ struct DayDetailView: View {
                     .frame(minHeight: 320)
                 } else {
                     ForEach(day.sortedClips) { clip in
+                        if !clip.hasAudio || !clip.attachments.isEmpty {
+                            NavigationLink { EntryDetailView(entry: clip) } label: { EntrySummaryRow(entry: clip) }
+                                .buttonStyle(.plain)
+                                .padding(16)
+                                .background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 20))
+                        } else {
                         RecordingCard(
                             clip: clip,
                             isSelected: player.playingClipID == clip.id,
@@ -53,6 +60,7 @@ struct DayDetailView: View {
                             viewOriginalAction: { originalTranscriptClip = clip },
                             deleteAction: { delete(clip) }
                         )
+                        }
                     }
                 }
             }
@@ -61,7 +69,7 @@ struct DayDetailView: View {
             .padding(.bottom, 100)
         }
         .background(Color(uiColor: .systemGroupedBackground))
-        .navigationTitle(day.date.chineseMonthDayWeekday)
+        .navigationTitle(day.date.displayMonthDayWeekday)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -75,6 +83,8 @@ struct DayDetailView: View {
         }
         .safeAreaInset(edge: .bottom) {
             HStack {
+                Button { showTextComposer = true } label: { Label("写文字 / 添加附件", systemImage: "square.and.pencil") }
+                    .buttonStyle(.bordered)
                 Spacer()
                 Button {
                     showRecorder = true
@@ -93,6 +103,7 @@ struct DayDetailView: View {
         .sheet(isPresented: $showRecorder) {
             RecordingSheet(day: day)
         }
+        .sheet(isPresented: $showTextComposer) { EntryComposerView(initialDay: day) }
         .sheet(item: $editingClip) { clip in
             TranscriptEditorSheet(clip: clip)
         }
@@ -235,7 +246,7 @@ private struct RecordingCard: View {
                 .accessibilityLabel(isPlaying ? "暂停" : "播放")
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(clip.createdAt.chineseTime)
+                    Text(clip.createdAt.displayTime)
                         .font(.subheadline.weight(.medium))
                     if !isSelected {
                         Text(clip.duration.durationText)

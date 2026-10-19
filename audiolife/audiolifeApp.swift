@@ -15,6 +15,7 @@ struct audiolifeApp: App {
 
     init() {
         DiagnosticLogger.log("AudioLife application initialized")
+        guard case .success = AppModelStore.loadResult else { return }
         AppModelStore.migrateLegacyContentIfNeeded()
         AudioLifeShortcuts.updateAppShortcutParameters()
         _ = RecordingSessionManager.shared
@@ -22,12 +23,16 @@ struct audiolifeApp: App {
 
     var body: some Scene {
         WindowGroup {
+            if case .success(let container) = AppModelStore.loadResult {
             ContentView()
                 .environment(router)
                 .onOpenURL { url in
                     router.handle(url: url)
                 }
+                .modelContainer(container)
+            } else if case .failure(let error) = AppModelStore.loadResult {
+                DataStoreRecoveryView(message: error.localizedDescription)
+            }
         }
-        .modelContainer(AppModelStore.container)
     }
 }

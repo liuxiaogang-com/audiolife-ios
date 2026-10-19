@@ -7,6 +7,8 @@ struct StorageClipDescriptor: Sendable {
     let fileName: String
     let isTrashed: Bool
     let audioURL: URL?
+    var attachmentURLs: [URL] = []
+    var displayName: String = ""
 }
 
 struct StorageClipUsage: Identifiable, Sendable {
@@ -24,6 +26,7 @@ struct StorageSnapshot: Sendable {
     var exportCacheBytes: Int64 = 0
     var diagnosticLogBytes: Int64 = 0
     var databaseBytes: Int64 = 0
+    var draftAttachmentBytes: Int64 = 0
     var clips: [StorageClipUsage] = []
 
     nonisolated init(
@@ -43,7 +46,7 @@ struct StorageSnapshot: Sendable {
     }
 
     var totalBytes: Int64 {
-        activeRecordingBytes + trashBytes + exportCacheBytes + diagnosticLogBytes + databaseBytes
+        activeRecordingBytes + trashBytes + exportCacheBytes + diagnosticLogBytes + databaseBytes + draftAttachmentBytes
     }
 }
 
@@ -85,7 +88,7 @@ enum StorageManager {
             let transcriptBytes = descriptor.audioURL.map {
                 fileSize($0.appendingPathExtension("transcript.txt"))
             } ?? 0
-            let bytes = audioBytes + transcriptBytes
+            let bytes = audioBytes + transcriptBytes + descriptor.attachmentURLs.reduce(Int64(0)) { $0 + fileSize($1) }
             if descriptor.isTrashed {
                 snapshot.trashBytes += bytes
             } else {
@@ -95,7 +98,7 @@ enum StorageManager {
                 id: descriptor.id,
                 createdAt: descriptor.createdAt,
                 duration: descriptor.duration,
-                fileName: descriptor.fileName,
+                fileName: descriptor.fileName.isEmpty ? descriptor.displayName : descriptor.fileName,
                 isTrashed: descriptor.isTrashed,
                 bytes: bytes
             )
@@ -104,6 +107,8 @@ enum StorageManager {
         snapshot.exportCacheBytes = directorySize(exportCacheDirectory)
         snapshot.diagnosticLogBytes = fileSize(diagnosticLogURL)
         snapshot.databaseBytes = applicationSupportSize()
+        let referenced = Set(descriptors.flatMap(\.attachmentURLs)).reduce(Int64(0)) { $0 + fileSize($1) }
+        snapshot.draftAttachmentBytes = max(0, directorySize(EntryFiles.root) - referenced)
         return snapshot
     }
 

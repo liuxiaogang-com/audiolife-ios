@@ -84,6 +84,36 @@ final class RecordingClip {
     var trashedAt: Date?
     var day: JournalDay?
 
+    // Additive fields keep the original SwiftData entity, UUIDs and relationships.
+    // A nil day is a free-form note; a day association makes it a diary entry.
+    var manualTitle: String = ""
+    var attachmentsData: Data = Data()
+    var modifiedAt: Date?
+    var processingState: String = ""
+    var processingError: String = ""
+
+    var hasAudio: Bool { !fileName.isEmpty }
+
+    var attachments: [EntryAttachment] {
+        get { (try? JSONDecoder().decode([EntryAttachment].self, from: attachmentsData)) ?? [] }
+        set { attachmentsData = (try? JSONEncoder().encode(newValue)) ?? Data() }
+    }
+
+    var displayTitle: String {
+        if !manualTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return manualTitle }
+        if !aiTitle.isEmpty { return aiTitle }
+        if let line = transcript.split(separator: "\n").first, !line.isEmpty { return String(line.prefix(48)) }
+        if let attachment = attachments.first { return attachment.originalName }
+        return hasAudio ? "录音" : "未命名笔记"
+    }
+
+    var searchableText: String {
+        ([manualTitle, transcript, aiTitle, aiSummary] + allTags
+         + attachments.flatMap { [$0.originalName, $0.extractedText] }).joined(separator: "\n")
+    }
+
+    var isEffectivelyTrashed: Bool { isTrashed || day?.isTrashed == true }
+
     init(
         createdAt: Date = Date(),
         duration: TimeInterval,

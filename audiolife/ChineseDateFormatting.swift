@@ -1,40 +1,40 @@
 import Foundation
 
-extension Date {
-    var chineseFullDate: String {
-        ChineseDateFormatters.full.string(from: self)
-    }
-
-    var chineseMonthDayWeekday: String {
-        ChineseDateFormatters.monthDayWeekday.string(from: self)
-    }
-
-    var chineseMonth: String {
-        ChineseDateFormatters.month.string(from: self)
-    }
-
-    var chineseDay: String {
-        ChineseDateFormatters.day.string(from: self)
-    }
-
-    var chineseTime: String {
-        ChineseDateFormatters.time.string(from: self)
-    }
-}
-
-private enum ChineseDateFormatters {
-    static let full = make("yyyy年M月d日 EEEE")
-    static let monthDayWeekday = make("M月d日 EEEE")
-    static let month = make("M月")
-    static let day = make("d")
-    static let time = make("HH:mm")
-
-    private static func make(_ format: String) -> DateFormatter {
+/// Human-readable dates follow the phone's region, calendar, clock and time zone.
+/// Create formatters on demand so cached values cannot retain an old time zone.
+nonisolated enum AppDateFormatting {
+    static func string(
+        from date: Date,
+        template: String? = nil,
+        dateStyle: DateFormatter.Style = .medium,
+        timeStyle: DateFormatter.Style = .none,
+        locale: Locale = .autoupdatingCurrent,
+        timeZone: TimeZone = .autoupdatingCurrent,
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> String {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_Hans_CN")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.dateFormat = format
-        return formatter
+        formatter.locale = locale
+        formatter.calendar = calendar
+        formatter.timeZone = timeZone
+        if let template {
+            formatter.setLocalizedDateFormatFromTemplate(template)
+        } else {
+            formatter.dateStyle = dateStyle
+            formatter.timeStyle = timeStyle
+        }
+        return formatter.string(from: date)
     }
 }
 
+extension Date {
+    nonisolated var displayFullDate: String { AppDateFormatting.string(from: self, template: "yMMMMdEEEE") }
+    nonisolated var displayMonthDayWeekday: String { AppDateFormatting.string(from: self, template: "MMMdEEEE") }
+    nonisolated var displayMonth: String { AppDateFormatting.string(from: self, template: "MMMM") }
+    nonisolated var displayDay: String { AppDateFormatting.string(from: self, template: "d") }
+    nonisolated var displayTime: String { AppDateFormatting.string(from: self, dateStyle: .none, timeStyle: .short) }
+    nonisolated var displayDate: String { AppDateFormatting.string(from: self) }
+    nonisolated var displayDateTime: String { AppDateFormatting.string(from: self, timeStyle: .short) }
+    nonisolated var displayCompactDateTime: String { AppDateFormatting.string(from: self, template: "MMMdjmm") }
+    nonisolated var displayMonthDay: String { AppDateFormatting.string(from: self, template: "MMMd") }
+    nonisolated var displayMonthYear: String { AppDateFormatting.string(from: self, template: "yMMMM") }
+}

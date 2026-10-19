@@ -8,7 +8,7 @@
 import SwiftData
 import SwiftUI
 
-struct ContentView: View {
+struct DiaryHomeView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(AppRouter.self) private var router
     @Query(sort: \JournalDay.date, order: .reverse) private var days: [JournalDay]
@@ -28,6 +28,7 @@ struct ContentView: View {
     @State private var exportDay: JournalDay?
     @State private var showExportOptions = false
     @State private var todoSuggestionBatch: TodoSuggestionBatch?
+    @State private var showTextComposer = false
 
     private var visibleDays: [JournalDay] {
         days.filter { !$0.isTrashed && !$0.activeClips.isEmpty }
@@ -63,39 +64,35 @@ struct ContentView: View {
     }
 
     private var recordingCountsByDate: [Date: Int] {
-        Dictionary(uniqueKeysWithValues: visibleDays.map {
-            (Calendar.current.startOfDay(for: $0.date), $0.activeClips.count)
-        })
+        visibleDays.reduce(into: [:]) { result, day in
+            result[Calendar.current.startOfDay(for: day.date), default: 0] += day.activeClips.count
+        }
     }
 
     private var matchingClips: [RecordingClip] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         return visibleDays.flatMap(\.activeClips).filter { clip in
             let matchesDate = selectedDate == nil || Calendar.current.isDate(
-                clip.createdAt,
+                clip.day?.date ?? clip.createdAt,
                 inSameDayAs: selectedDate ?? clip.createdAt
             )
             let matchesTag = selectedTag == nil || clip.allTags.contains { tag in
                 tag.localizedCaseInsensitiveCompare(selectedTag ?? "") == .orderedSame
             }
             let matchesQuery = query.isEmpty
-                || clip.transcript.localizedStandardContains(query)
-                || clip.aiTitle.localizedStandardContains(query)
-                || clip.aiSummary.localizedStandardContains(query)
-                || clip.allTags.contains { $0.localizedStandardContains(query) }
+                || clip.searchableText.localizedStandardContains(query)
             return matchesDate && matchesTag && matchesQuery
         }.sorted { $0.createdAt > $1.createdAt }
     }
 
     var body: some View {
-        TabView {
             NavigationStack(path: $path) {
                 List {
                 if visibleDays.isEmpty && searchText.isEmpty {
                     ContentUnavailableView(
-                        "还没有录音",
+                        "还没有日记",
                         systemImage: "waveform",
-                        description: Text("点击下方按钮，记录今天的第一段声音。")
+                        description: Text("写一段文字，或者录下今天的声音。")
                     )
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
@@ -106,14 +103,14 @@ struct ContentView: View {
                         description: Text(
                             selectedDate == nil
                                 ? "换一个关键词或标签试试。"
-                                : "这一天没有符合当前条件的录音，可以取消日期筛选。"
+                                : "这一天没有符合当前条件的记录，可以取消日期筛选。"
                         )
                     )
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                 } else if isFiltering {
                     HStack {
-                        Text("找到 \(matchingClips.count) 段录音")
+                        Text("找到 \(matchingClips.count) 条记录")
                         Spacer()
                         Button("清除筛选") { clearFilters() }
                             .buttonStyle(.plain)
@@ -128,6 +125,9 @@ struct ContentView: View {
                     .listRowSeparator(.hidden)
 
                     ForEach(matchingClips) { clip in
+                        if !clip.hasAudio {
+                            NavigationLink { EntryDetailView(entry: clip) } label: { EntrySummaryRow(entry: clip) }
+                        } else {
                         SearchRecordingCard(
                             clip: clip,
                             query: searchText.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -149,6 +149,7 @@ struct ContentView: View {
                         )
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
+                        }
                     }
                 } else {
                     ForEach(visibleDays) { day in
@@ -184,7 +185,7 @@ struct ContentView: View {
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
                 .background(Color(uiColor: .systemGroupedBackground))
-                .navigationTitle("录音日记")
+                .navigationTitle("日记")
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         Button {
@@ -239,6 +240,9 @@ struct ContentView: View {
                 }
                 .safeAreaInset(edge: .bottom) {
                     HStack {
+                        Button { showTextComposer = true } label: {
+                            Label("写日记", systemImage: "square.and.pencil")
+                        }.buttonStyle(.bordered)
                         Spacer()
                         Button {
                             presentTodayRecorder()
@@ -265,16 +269,7 @@ struct ContentView: View {
                     }
                 }
             }
-            .tabItem {
-                Label("日记", systemImage: "waveform")
-            }
-
-            TodoListView()
-                .tabItem {
-                    Label("待办", systemImage: "checklist")
-                }
-        }
-        .tabBarMinimizeBehavior(.onScrollDown)
+        .sheet(isPresented: $showTextComposer) { DiaryComposerLauncher() }
         .onChange(of: router.quickRecordingRequest) { _, _ in
             handleQuickRecordingRequest()
         }
@@ -436,13 +431,15 @@ private struct RecordingCalendar: View {
         repeating: GridItem(.flexible(), spacing: 4),
         count: 7
     )
-    private let weekdayTitles = ["一", "二", "三", "四", "五", "六", "日"]
+    private var weekdayTitles: [String] {
+        let symbols = calendar.shortStandaloneWeekdaySymbols
+        return (0..<7).map { symbols[(calendar.firstWeekday - 1 + $0) % 7] }
+    }
 
     private var calendar: Calendar {
-        var value = Calendar(identifier: .gregorian)
-        value.locale = Locale(identifier: "zh_CN")
-        value.timeZone = .current
-        value.firstWeekday = 2
+        var value = Calendar.autoupdatingCurrent
+        value.locale = .autoupdatingCurrent
+        value.timeZone = .autoupdatingCurrent
         return value
     }
 
@@ -479,15 +476,10 @@ private struct RecordingCalendar: View {
 
     private var headerTitle: String {
         if isExpanded {
-            return anchorDate.formatted(
-                .dateTime.locale(Locale(identifier: "zh_CN")).year().month(.wide)
-            )
+            return anchorDate.displayMonthYear
         }
         guard let start = weekDates.first, let end = weekDates.last else { return "" }
-        if calendar.isDate(start, equalTo: end, toGranularity: .month) {
-            return "\(start.formatted(.dateTime.locale(Locale(identifier: "zh_CN")).month(.wide)))\(calendar.component(.day, from: start))日–\(calendar.component(.day, from: end))日"
-        }
-        return "\(start.formatted(.dateTime.locale(Locale(identifier: "zh_CN")).month().day()))–\(end.formatted(.dateTime.locale(Locale(identifier: "zh_CN")).month().day()))"
+        return "\(start.displayMonthDay)–\(end.displayMonthDay)"
     }
 
     var body: some View {
@@ -538,8 +530,8 @@ private struct RecordingCalendar: View {
             }
 
             LazyVGrid(columns: columns, spacing: 5) {
-                ForEach(weekdayTitles, id: \.self) { title in
-                    Text(title)
+                ForEach(weekdayTitles.indices, id: \.self) { index in
+                    Text(weekdayTitles[index])
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(.tertiary)
                         .frame(maxWidth: .infinity)
@@ -608,7 +600,7 @@ private struct RecordingCalendar: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(
-            "\(day.formatted(.dateTime.locale(Locale(identifier: "zh_CN")).month().day().weekday(.wide)))，\(count) 段录音"
+            "\(day.displayMonthDayWeekday)，\(count) 条记录"
         )
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
@@ -637,20 +629,20 @@ private struct DayRow: View {
     private var displayTitle: String {
         if Calendar.current.isDateInToday(day.date) { return "今天" }
         if Calendar.current.isDateInYesterday(day.date) { return "昨天" }
-        return day.date.chineseMonthDayWeekday
+        return day.date.displayMonthDayWeekday
     }
 
     private var transcriptPreview: String? {
-        let candidates = day.sortedClips.filter { !$0.transcript.isEmpty }
-        return candidates.first?.transcript
+        guard let entry = day.sortedClips.first else { return nil }
+        return entry.transcript.isEmpty ? entry.displayTitle : entry.transcript
     }
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             VStack(spacing: 0) {
-                Text(day.date.chineseDay)
+                Text(day.date.displayDay)
                     .font(.title2.weight(.bold))
-                Text(day.date.chineseMonth)
+                Text(day.date.displayMonth)
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.secondary)
             }
@@ -665,7 +657,7 @@ private struct DayRow: View {
                 }
 
                 HStack(spacing: 12) {
-                    Text("\(day.activeClips.count) 段录音")
+                    Text("\(day.activeClips.count) 条记录")
                     Text(day.totalDuration.durationText)
                 }
                 .font(.caption)
@@ -757,9 +749,9 @@ private struct SearchRecordingCard: View {
                 .buttonStyle(.plain)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(clip.createdAt.chineseMonthDayWeekday)
+                    Text(clip.createdAt.displayMonthDayWeekday)
                         .font(.subheadline.weight(.semibold))
-                    Text(clip.createdAt.chineseTime)
+                    Text(clip.createdAt.displayTime)
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }

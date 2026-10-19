@@ -10,7 +10,7 @@ struct RecordingSheet: View {
     var body: some View {
         VStack(spacing: 16) {
             VStack(spacing: 6) {
-                Text(day.date.chineseFullDate)
+                Text(day.date.displayFullDate)
                     .font(.headline)
                 HStack(spacing: 7) {
                     Circle()

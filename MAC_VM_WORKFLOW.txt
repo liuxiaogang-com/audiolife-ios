@@ -1,0 +1,212 @@
+AudioLife: Windows development / Mac Xcode validation
+
+Source of truth
+  Edit code and manage Git in this Windows repository.
+  Mac copies are isolated source snapshots for validation, not another Git checkout.
+  No application features or Xcode project settings are changed by the workflow.
+
+Run from PowerShell 7
+  pwsh.exe -File .\scripts\Invoke-MacBuild.ps1
+
+Connection
+  Mac: xiao@192.168.159.135
+  Workspace: /Users/xiao/Developer/AudioLife-ssh/runs/<run-id>/src
+  Private key: %USERPROFILE%\.ssh\audiolife_mac_vm_ed25519
+  The key is stored outside this repository. No password is embedded in the scripts.
+  SSH uses strict host-key verification and noninteractive public-key authentication.
+  A DPAPI-encrypted sudo credential is stored outside Git at:
+    %USERPROFILE%\.ssh\audiolife_mac_vm.credential.xml
+  It is decryptable by this Windows user on this computer. It is used only for
+  the host-specific VMware network workaround described below.
+
+Each run
+  1. Collect tracked and nonignored source/scripts (including local uncommitted edits).
+     Exclude .git, Xcode user state, build caches, device backups, and credentials.
+  2. Create a source snapshot and per-file SHA-256 manifest on Windows.
+  3. Copy over SSH and verify every source hash on the Mac.
+  4. Run Xcode analyze and unsigned arm64 Release build for iPhone.
+  5. Build for Simulator, install in a new dedicated simulator, launch, check the
+     process remains running, take a screenshot, and shut down that simulator.
+  6. Package the with-widget unsigned IPA. If Live Activity is disabled in the
+     app, also package a nowidget variant by removing the extension from a copy.
+     Live Activity builds require the extension and do not produce a nowidget IPA.
+  7. Download output/logs and verify IPA SHA-256 again on Windows.
+
+Results
+  .build\mac-vm\<run-id>\output\
+    build-info.json: source commit, dirty state, toolchain, validation scope, hashes
+    source-manifest.json: exact files uploaded and their hashes
+    *-with-widget-unsigned.ipa: full build with the Control Center Widget extension
+      and, when enabled, Live Activity / Dynamic Island
+    *-nowidget-unsigned.ipa: extension removed for the previous sideloading route
+    *.ipa.sha256: artifact checksums
+    simulator-home.png: actual simulator startup screenshot
+    workflow.log / analyze.log / release.log / simulator-build.log: diagnostics
+  Build output is ignored by Git. Scripts/documentation can be reviewed and committed
+  separately; this workflow never commits, pushes, or installs to a physical phone.
+
+Options
+  -SkipSimulator: compile/analyze/package only; report marks simulator checks skipped.
+  -MacHost, -MacUser, -IdentityFile, -RemoteRoot: connection/workspace overrides.
+
+Validation boundaries
+  The existing project has no XCTest target; startup smoke validation is not a unit
+  test suite. Microphone, real recording, speech recognition, lock screen, Dynamic
+  Island, signing, and phone installation require separate acceptance checks.
+  Both IPAs are unsigned and require signing before physical-device installation.
+  Each run retains its Mac snapshot, build cache, logs and dedicated simulator for
+  diagnosis. These can be cleaned up deliberately after they are no longer needed.
+
+VMware network workaround
+  This VM's TCP segmentation offload causes very slow Mac-to-Windows downloads.
+  Initialize-MacVm.ps1 checks net.inet.tcp.tso and, for xiao@192.168.159.135 only,
+  sets it to 0 using the local encrypted sudo credential when needed.
+  This is a runtime-only sysctl change; no boot configuration or sudo policy is edited.
+  Mac restart restores the OS default; the next build applies the workaround again.
+  To restore the default manually: sudo sysctl -w net.inet.tcp.tso=1
+
+Verified run: 2026-10-17
+  Run ID: 20261017-121101-35217d
+  Source: e2e74d7, app version 1.0 (2), no functional source edits.
+  macOS 15.7.9 Intel / Xcode 26.3 / iPhoneOS SDK 26.2.
+  40 source files passed transfer SHA-256 checks.
+  Analyze, arm64 Release build, x86_64 Simulator build and startup all passed.
+  The simulator screenshot was visually checked and showed the recording diary home.
+  Both unsigned IPAs returned to Windows and passed SHA-256 verification.
+  Existing warnings: AudioController.swift lines 365 and 506 capture self in
+  concurrently executing code; warnings in the project's Swift 5 language mode.
+  Network workaround was tested from state 1 -> 0 using the encrypted credential.
+  A repeated 9,537,641-byte artifact download completed in 0.51 s with matching hash.
+  Results: .build\mac-vm\20261017-121101-35217d\output
+
+Signing investigation: 2026-10-17
+  Initial finding before local restoration: with-widget meant only that the
+  Control Center control was embedded. Historical chat explicitly
+  records removing Live Activity UI, ActivityKit creation code and the
+  NSSupportsLiveActivities declaration. The initial e2e74d7 source confirmed this.
+  Windows has Sideloadly 0.70.1 (daemon load log), iTunes 12.13.10.3,
+  iCloud 7.18.0.22 and Apple Mobile Device Support 19.4.0.10 installed.
+  Historical Sideloadly error 7252 was a certificate lookup/revocation failure.
+  The old signed Documents/AudioLife-1.0-2-e2e74d7.ipa has a main app profile
+  but its AudioLifeWidgets.appex has no embedded.mobileprovision.
+  Main and extension Bundle IDs in that package do have the correct parent prefix.
+  The two old Documents IPA profiles expired on 2026-09-13; do not reuse them.
+  No iPhone was detected over usbmux during this investigation. Current account
+  certificate state, available App IDs and real installation are not yet verified.
+  Next device attempt: back up current app data and identify its exact Bundle ID;
+  retain extensions; sign main app and extension with valid matching profiles;
+  validate the resulting package before installing. Do not delete the current app
+  or revoke shared certificates as a routine troubleshooting step.
+
+Historical local Live Activity trial: 2026-10-17 (REVERTED; never committed or pushed)
+  Run ID: 20261017-123024-9145e2; source manifest verified 41 files.
+  Restored RecordingActivityAttributes, lock screen / Dynamic Island UI,
+  begin/stop AudioRecordingIntent + LiveActivityIntent, foreground fallback,
+  and recording-session ActivityKit start/end lifecycle.
+  Enabled NSSupportsLiveActivities. Current transcription / AI / todo logic remains.
+  Analyze, arm64 Release build, Simulator build/startup and download hashes passed.
+  Initial 5-second screenshot captured the launch screen. Warm relaunch with a
+  20-second wait showed the actual diary home (simulator-home-recheck.png).
+  No physical device signing, installation, recording or Live Activity interaction
+  has been verified. Existing AudioController concurrency warnings remain.
+  Delivery relative to AudioLife folder:
+    BuildArtifacts\local-liveactivity-20261017-123024\AudioLife-LiveActivity-Test.ipa
+  SHA-256: a536055064f7d6102c6b6fb1bcf6a3ada04e85e71cd0b8b8fd27738e289c78cc
+
+Current state after user-requested removal: 2026-10-17
+  The four application files changed for the Live Activity trial were restored to
+  HEAD e2e74d7. Tracked diff is empty; files match the earlier successful baseline
+  snapshot after normalizing Windows CRLF / LF text line endings.
+  Dynamic Island UI, ActivityKit lifecycle, LiveActivityIntent / AudioRecordingIntent
+  and NSSupportsLiveActivities were removed. The original Control Center Widget
+  and foreground quick-recording behavior remain as before the trial.
+  Mac build scripts and diagnostics are retained; no commit or push was performed.
+  Earlier liveactivity IPAs are historical test artifacts, not the current source.
+  This local removal does not alter the version already installed on the iPhone.
+
+AudioLife 1.1 (3) local feature development: 2026-10-17
+  This section supersedes the earlier statement that the tracked diff is empty.
+  Local source now implements unified note/diary records, text composition and
+  persistent drafts, external audio import and resumable transcription processing,
+  image/video/file attachments, local image OCR, previews and original-file export.
+  The AI tab only displays the development placeholder. Existing per-record AI
+  fields are retained for data compatibility; no vector index or new AI service
+  is configured. Live Activity / Dynamic Island remains disabled.
+  All edits remain local. Nothing has been committed, staged or pushed.
+
+Repeatable library validation
+  Invoke-MacBuild.ps1 now runs scripts/mac-library-tests.sh after a full simulator
+  build. It uses only its own dedicated simulator and resets that test app.
+  It validates note/diary reassignment, independent attachment copies and hashes,
+  path boundaries, OCR, interrupted queue recovery/retry, cancellation, manual
+  text preservation, persistent drafts, archive contents and permanent deletion.
+  It captures notes, diary, AI and composer screenshots with an empty test library.
+  -SkipSimulator intentionally skips these runtime tests.
+  To also check a legacy database fixture on the Mac:
+    bash <run>/src/scripts/mac-library-tests.sh <run> <private-fixture-directory>
+  Fixture directory: default.store, optional default.store-wal/default.store-shm,
+  and migration-expectations.json. Keep fixtures and private data outside Git.
+  Reports are library-validation.json and library-validation-export.zip in output.
+  These are explicit DEBUG runtime checks, not XCTest or physical-device tests.
+
+User acceptance still requires the iPhone
+  Sign the nowidget unsigned IPA with Sideloadly using the existing account and
+  Bundle ID. Preserve a backup and upgrade the existing app rather than deleting
+  it first. The Mac does not need Apple ID login for these unsigned builds.
+  Check actual Chinese audio transcription, Photos/Files provider imports, video
+  preview, and continued recording on the phone. Simulator tests cannot establish
+  the device's speech-model availability or replace physical-device acceptance.
+  Imported audio and images process while the app is able to run. If iOS terminates
+  the process, pending work resumes after reopening; uninterrupted background
+  transcription is not promised. Unsupported media retains the original file.
+
+Simulator visual limitation observed during feature validation
+  Notes, diary, AI placeholder and composer content were visually inspected.
+  This Intel VM renders iOS 26 system glass/tab-bar foreground incompletely.
+  The unchanged baseline run 20261017-121101-35217d shows the same blurred
+  system tab bar. Do not treat simulator screenshots as proof of final tab-bar
+  appearance on the iPhone; include that in physical-device acceptance.
+
+Final local feature validation: 2026-10-17
+  Run: 20261017-131427-5cc490, reviewed source manifest with 51 verified files.
+  App: 1.1 (3), com.liuxiaogang.audiolife, arm64, iOS 26.0 minimum.
+  Analyze, Release iPhone build, Simulator build/startup: passed.
+  DEBUG runtime checks: 11 passed, including actual legacy database migration.
+  Historical fixture: 53 records / 6 days / 12 todos; pre-migration database file
+  hashes, original IDs, recording paths, transcript hashes and day links match.
+  Export ZIP independently passed CRC validation and all three original attachment
+  SHA-256 checks (text, rendered image, generated WAV).
+  All new actor-isolation warnings were fixed; two existing AudioController
+  captured-self warnings remain in the project's Swift 5 language mode.
+  No new AI service, Live Activity or signing capability was introduced.
+  Delivered nowidget unsigned IPA SHA-256:
+    c51d45ad1d3958b19c8a2ac9c644dbc7d41e91aed1974de1c2c4ca1f1470f8e1
+  Delivery relative to AudioLife folder:
+    BuildArtifacts\local-notes-1.1-3-20261017
+  No physical-device installation was performed for this feature version.
+
+Settings version display update: 2026-10-17
+  Run 20261017-150412-004e28, version 1.1 / build 4.
+  Settings now displays version/build directly from Bundle.main in the first section.
+  Analyze and unsigned arm64 Release passed; simulator and physical UI not tested.
+  Delivered: BuildArtifacts/local-version-display-1.1-4-20261017 (relative to AudioLife).
+  No schema changes, phone installation, commit or push in this update.
+
+Date/time display update: 2026-10-17
+  Run 20261017-151130-872f90, version 1.1 / build 5.
+  All human-readable date/time labels use AppDateFormatting and phone locale,
+  region, calendar, timezone and clock preferences. JSON timestamps and filenames
+  retain their stable machine formats. Stored dates and schema are unchanged.
+  Declared zh-Hans/zh-Hant/en localization support and zh-Hans development region.
+  Analyze, arm64 Release, simulator build/launch and 10 runtime checks passed.
+  Date checks prove zh_CN/Asia-Shanghai and en_US/America-New_York cross-midnight
+  behavior, plus h12/h23 clock formats, using the same Foundation formatting code.
+  Delivered: BuildArtifacts/local-date-format-1.1-5-20261017 (relative to AudioLife).
+  No phone installation, commit or push was performed.
+
+GitHub / new Mac handoff: 2026-10-19
+  Version 1.1 (5) is being committed with application source and build helpers.
+  Use MAC_DEVELOPMENT.txt for new Mac clone/open/build commands.
+  The historical Windows-primary instructions above describe the old VM workflow.
+  A new Mac can develop directly in its local Git clone without those VM credentials.
+  Private phone backups, IPAs, caches and SSH/sudo credentials remain outside Git.
